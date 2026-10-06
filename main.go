@@ -5,47 +5,68 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
+	"net"
 	"strings"
 )
 
 // TIP <p>To run your code, right-click the code and select <b>Run</b>.</p> <p>Alternatively, click
 // the <icon src="AllIcons.Actions.Execute"/> icon in the gutter and select the <b>Run</b> menu item from here.</p>
+const port = ":42069"
+
 func main() {
-	const inputFilePath = "messages.txt"
-	file, err := os.Open(inputFilePath)
+	listener, err := net.Listen("tcp", port)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("error listening for tcp traffic: %s\n", err.Error())
 	}
-	defer file.Close()
+	defer listener.Close()
 
-	fmt.Printf("Reading data from %s\n", inputFilePath)
-	fmt.Println("=====================================")
+	fmt.Println("Listening for traffic on ", port)
 
-	currentLineContents := ""
 	for {
-		buffer := make([]byte, 8, 8)
-		n, err := file.Read(buffer)
+		conn, err := listener.Accept()
 		if err != nil {
-			if currentLineContents != "" {
-				fmt.Printf("read: %s\n", currentLineContents)
-				currentLineContents = ""
-			}
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			fmt.Printf("error: %s\n", err.Error())
-			break
+			log.Fatalf("error: %s\n", err.Error())
 		}
-		str := string(buffer[:n])
-		parts := strings.Split(str, "\n")
 
-		for i := 0; i < len(parts)-1; i++ {
-			fmt.Printf("read: %s%s\n", currentLineContents, parts[i])
-			currentLineContents = ""
+		fmt.Println("Accepted connection from", conn.RemoteAddr())
+
+		linesChan := getLinesChannel(conn)
+
+		for line := range linesChan {
+			fmt.Println(line)
 		}
-		currentLineContents += parts[len(parts)-1]
-
+		fmt.Println("Closing connection from", conn.RemoteAddr())
 	}
+}
 
+func getLinesChannel(file io.ReadCloser) <-chan string {
+	lines := make(chan string)
+	go func() {
+		defer file.Close()
+		defer close(lines)
+		currentLinesContents := ""
+
+		for {
+			buffer := make([]byte, 8, 8)
+			n, err := file.Read(buffer)
+			if err != nil {
+				if currentLinesContents != "" {
+					lines <- currentLinesContents
+				}
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				fmt.Println("Error reading from file:", err.Error())
+				return
+			}
+			str := string(buffer[:n])
+			parts := strings.Split(str, "\n")
+			for i := 0; i < len(parts)-1; i++ {
+				lines <- fmt.Sprintf("%s%s", currentLinesContents, parts[i])
+				currentLinesContents = ""
+			}
+			currentLinesContents += parts[len(parts)-1]
+		}
+	}()
+	return lines
 }
